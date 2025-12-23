@@ -1,0 +1,20 @@
+# Node
+app/node_modules/
+app/build/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+
+# Docker
+*.tar
+
+# Env
+.env
