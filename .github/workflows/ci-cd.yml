@@ -16,6 +16,7 @@ jobs:
       TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
       EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
       IMAGE_NAME: devops-eks-project
+      SKIP_BOOTSTRAP: true  # Set to false only for first run
 
     steps:
     # -------------------------------------------------
@@ -44,24 +45,27 @@ jobs:
 
     # -------------------------------------------------
     # Terraform Bootstrap (S3 + DynamoDB Backend)
+    # Only run if SKIP_BOOTSTRAP is false
     # -------------------------------------------------
-
     - name: Debug backend values
+      if: env.SKIP_BOOTSTRAP != 'true'
       run: |
          printf "Bucket=[%s]\n" "$TF_STATE_BUCKET"
          printf "Table=[%s]\n" "$TF_LOCK_TABLE"
+
     - name: Terraform Bootstrap Init
+      if: env.SKIP_BOOTSTRAP != 'true'
       run: |
         cd terraform/bootstrap
         terraform init
 
     - name: Terraform Bootstrap Apply
+      if: env.SKIP_BOOTSTRAP != 'true'
       run: |
         cd terraform/bootstrap
         terraform apply -auto-approve \
            -var="state_bucket_name=$(echo -n "$TF_STATE_BUCKET" | tr -d '\n')" \
            -var="lock_table_name=$(echo -n "$TF_LOCK_TABLE" | tr -d '\n')"
-          
 
     # -------------------------------------------------
     # Terraform Main Infrastructure
