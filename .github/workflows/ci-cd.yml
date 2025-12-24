@@ -1,0 +1,125 @@
+name: End-to-End DevOps EKS Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
+      EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+      IMAGE_NAME: devops-eks-project
+
+    steps:
+    # -------------------------------------------------
+    # Checkout
+    # -------------------------------------------------
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # -------------------------------------------------
+    # AWS Authentication (OIDC)
+    # -------------------------------------------------
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    # -------------------------------------------------
+    # Terraform Bootstrap (Backend)
+    # -------------------------------------------------
+    - name: Terraform Bootstrap Init
+      run: |
+        cd terraform/bootstrap
+        terraform init
+
+    - name: Terraform Bootstrap Apply
+      run: |
+        cd terraform/bootstrap
+        terraform apply -auto-approve \
+          -var="state_bucket_name=${TF_STATE_BUCKET}" \
+          -var="lock_table_name=${TF_LOCK_TABLE}"
+
+    # -------------------------------------------------
+    # Terraform Main Infrastructure
+    # -------------------------------------------------
+    - name: Terraform Init (Main)
+      run: |
+        cd terraform
+        terraform init
+
+    - name: Terraform Apply (Main)
+      run: |
+        cd terraform
+        terraform apply -auto-approve
+
+    # -------------------------------------------------
+    # Login to ECR
+    # -------------------------------------------------
+    - name: Login to Amazon ECR
+      run: |
+        aws ecr get-login-password --region $AWS_REGION \
+        | docker login \
+          --username AWS \
+          --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+    # -------------------------------------------------
+    # Build & Push Docker Image
+    # -------------------------------------------------
+    - name: Build Docker Image
+      run: |
+        docker build \
+          -t $IMAGE_NAME:latest \
+          -f docker/Dockerfile .
+
+    - name: Tag & Push Docker Image
+      run: |
+        docker tag $IMAGE_NAME:latest \
+          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
+
+        docker push \
+          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
+
+    # -------------------------------------------------
+    # Configure kubectl
+    # -------------------------------------------------
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region $AWS_REGION \
+          --name $EKS_CLUSTER_NAME
+
+    # -------------------------------------------------
+    # Deploy to Kubernetes
+    # -------------------------------------------------
+    - name: Deploy Kubernetes Manifests
+      run: |
+        export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+        export AWS_REGION=${{ secrets.AWS_REGION }}
+
+        envsubst < k8s/deployment.yaml | kubectl apply -f -
+        kubectl apply -f k8s/namespace.yaml
+        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/ingress.yaml
+
+
+    # -------------------------------------------------
+    # Verify Deployment
+    # -------------------------------------------------
+    - name: Verify Deployment
+      run: |
+        kubectl get pods -n devops
+        kubectl get svc -n devops
+        kubectl get ingress -n devops
