@@ -5,10 +5,6 @@ on:
     branches:
       - main
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -23,22 +19,23 @@ jobs:
 
     steps:
     # -------------------------------------------------
-    # Checkout
+    # Checkout Code
     # -------------------------------------------------
     - name: Checkout code
       uses: actions/checkout@v4
 
     # -------------------------------------------------
-    # AWS Authentication (OIDC)
+    # AWS Authentication (ACCESS KEYS ONLY — NO OIDC)
     # -------------------------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-role
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
 
     # -------------------------------------------------
-    # Terraform Bootstrap (Backend)
+    # Terraform Bootstrap (S3 + DynamoDB)
     # -------------------------------------------------
     - name: Terraform Bootstrap Init
       run: |
@@ -53,7 +50,7 @@ jobs:
           -var="lock_table_name=${TF_LOCK_TABLE}"
 
     # -------------------------------------------------
-    # Terraform Main Infrastructure
+    # Terraform Main Infrastructure (VPC, EKS, ECR, IAM)
     # -------------------------------------------------
     - name: Terraform Init (Main)
       run: |
@@ -66,7 +63,7 @@ jobs:
         terraform apply -auto-approve
 
     # -------------------------------------------------
-    # Login to ECR
+    # Login to Amazon ECR
     # -------------------------------------------------
     - name: Login to Amazon ECR
       run: |
@@ -76,7 +73,7 @@ jobs:
           --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
     # -------------------------------------------------
-    # Build & Push Docker Image
+    # Build Docker Image
     # -------------------------------------------------
     - name: Build Docker Image
       run: |
@@ -84,6 +81,9 @@ jobs:
           -t $IMAGE_NAME:latest \
           -f docker/Dockerfile .
 
+    # -------------------------------------------------
+    # Tag & Push Docker Image
+    # -------------------------------------------------
     - name: Tag & Push Docker Image
       run: |
         docker tag $IMAGE_NAME:latest \
@@ -93,7 +93,7 @@ jobs:
           $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
 
     # -------------------------------------------------
-    # Configure kubectl
+    # Configure kubectl for EKS
     # -------------------------------------------------
     - name: Update kubeconfig
       run: |
@@ -102,18 +102,17 @@ jobs:
           --name $EKS_CLUSTER_NAME
 
     # -------------------------------------------------
-    # Deploy to Kubernetes
+    # Deploy Kubernetes Manifests
     # -------------------------------------------------
     - name: Deploy Kubernetes Manifests
       run: |
         export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
         export AWS_REGION=${{ secrets.AWS_REGION }}
 
-        envsubst < k8s/deployment.yaml | kubectl apply -f -
         kubectl apply -f k8s/namespace.yaml
+        envsubst < k8s/deployment.yaml | kubectl apply -f -
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/ingress.yaml
-
 
     # -------------------------------------------------
     # Verify Deployment
