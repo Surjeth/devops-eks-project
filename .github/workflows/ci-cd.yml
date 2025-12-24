@@ -25,7 +25,15 @@ jobs:
       uses: actions/checkout@v4
 
     # -------------------------------------------------
-    # AWS Authentication (ACCESS KEYS ONLY — NO OIDC)
+    # Install Terraform (REQUIRED)
+    # -------------------------------------------------
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.6
+
+    # -------------------------------------------------
+    # AWS Authentication (ACCESS KEYS ONLY)
     # -------------------------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -35,7 +43,7 @@ jobs:
         aws-region: ${{ secrets.AWS_REGION }}
 
     # -------------------------------------------------
-    # Terraform Bootstrap (S3 + DynamoDB)
+    # Terraform Bootstrap (S3 + DynamoDB Backend)
     # -------------------------------------------------
     - name: Terraform Bootstrap Init
       run: |
@@ -50,7 +58,7 @@ jobs:
           -var="lock_table_name=${TF_LOCK_TABLE}"
 
     # -------------------------------------------------
-    # Terraform Main Infrastructure (VPC, EKS, ECR, IAM)
+    # Terraform Main Infrastructure
     # -------------------------------------------------
     - name: Terraform Init (Main)
       run: |
