@@ -45,6 +45,11 @@ jobs:
     # -------------------------------------------------
     # Terraform Bootstrap (S3 + DynamoDB Backend)
     # -------------------------------------------------
+
+    - name: Debug backend values
+      run: |
+         printf "Bucket=[%s]\n" "$TF_STATE_BUCKET"
+         printf "Table=[%s]\n" "$TF_LOCK_TABLE"
     - name: Terraform Bootstrap Init
       run: |
         cd terraform/bootstrap
@@ -54,8 +59,9 @@ jobs:
       run: |
         cd terraform/bootstrap
         terraform apply -auto-approve \
-          -var="state_bucket_name=${TF_STATE_BUCKET}" \
-          -var="lock_table_name=${TF_LOCK_TABLE}"
+           -var="state_bucket_name=$(echo -n "$TF_STATE_BUCKET" | tr -d '\n')" \
+           -var="lock_table_name=$(echo -n "$TF_LOCK_TABLE" | tr -d '\n')"
+          
 
     # -------------------------------------------------
     # Terraform Main Infrastructure
