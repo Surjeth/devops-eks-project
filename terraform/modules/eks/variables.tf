@@ -13,7 +13,8 @@ variable "subnet_ids" {
 variable "private_subnet_ids" {
   type = list(string)
 }
+
 variable "admin_principal_arn" {
-  description = "IAM user or role to grant EKS admin access"
+  description = "IAM principal allowed to administer the EKS cluster"
   type        = string
 }

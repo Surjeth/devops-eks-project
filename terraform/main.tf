@@ -17,10 +17,11 @@ module "ecr" {
 module "eks" {
   source = "./modules/eks"
 
-  project_name       = var.project_name
-  subnet_ids         = module.vpc.subnet_ids
-  private_subnet_ids = module.vpc.private_subnet_ids
-  cluster_role_arn  = module.iam.eks_cluster_role_arn
+  project_name        = var.project_name
+  subnet_ids          = module.vpc.subnet_ids
+  private_subnet_ids  = module.vpc.private_subnets
+  cluster_role_arn    = module.iam.eks_cluster_role_arn
 
+  # 🔥 THIS MUST MATCH YOUR PIPELINE IAM USER
   admin_principal_arn = "arn:aws:iam::505679504503:user/deploy"
 }
