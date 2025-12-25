@@ -1,5 +1,3 @@
-# main.tf (root level)
-
 module "vpc" {
   source       = "./modules/vpc"
   vpc_cidr     = var.vpc_cidr
@@ -13,14 +11,16 @@ module "iam" {
 module "ecr" {
   source = "./modules/ecr"
 
-  repository_name = "devops-eks-project-repo"
+  repository_name = "${var.project_name}-repo"
 }
 
-
 module "eks" {
-  source             = "./modules/eks"
+  source = "./modules/eks"
+
   project_name       = var.project_name
-  subnet_ids         = module.vpc.subnet_ids          # All subnets (public + private)
-  private_subnet_ids = module.vpc.private_subnet_ids  # Private subnets only
-  cluster_role_arn   = module.iam.eks_cluster_role_arn
+  subnet_ids         = module.vpc.subnet_ids
+  private_subnet_ids = module.vpc.private_subnet_ids
+  cluster_role_arn  = module.iam.eks_cluster_role_arn
+
+  admin_principal_arn = "arn:aws:iam::505679504503:user/deploy"
 }
