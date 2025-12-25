@@ -5,12 +5,17 @@ resource "aws_eks_cluster" "this" {
   name     = var.project_name
   role_arn = var.cluster_role_arn
 
+  access_config {
+    authentication_mode = "API_AND_CONFIG_MAP"
+  }
+
   vpc_config {
     subnet_ids              = var.subnet_ids
     endpoint_public_access  = true
     endpoint_private_access = false
   }
 }
+
 
 # ------------------------------------
 # IAM Role for Worker Nodes
