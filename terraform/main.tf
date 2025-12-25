@@ -11,9 +11,11 @@ module "iam" {
 }
 
 module "ecr" {
-  source       = "./modules/ecr"
-  project_name = var.project_name
+  source = "./modules/ecr"
+
+  repository_name = "devops-eks-project-repo"
 }
+
 
 module "eks" {
   source             = "./modules/eks"
