@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: react-app
-        image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/devops-eks-project:latest
+        image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/devops-eks-project-repo:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 80
