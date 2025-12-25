@@ -16,7 +16,6 @@ resource "aws_eks_cluster" "this" {
   }
 }
 
-
 # ------------------------------------
 # IAM Role for Worker Nodes
 # ------------------------------------
@@ -60,8 +59,7 @@ resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${var.project_name}-managed-nodes"
   node_role_arn   = aws_iam_role.node.arn
-
-  subnet_ids = var.private_subnet_ids
+  subnet_ids      = var.private_subnet_ids
 
   scaling_config {
     desired_size = 2
@@ -79,12 +77,16 @@ resource "aws_eks_node_group" "this" {
 }
 
 # ------------------------------------
-# ✅ EKS ACCESS ENTRY (AUTOMATED RBAC)
+# ✅ EKS ACCESS ENTRY (PIPELINE ADMIN)
 # ------------------------------------
 resource "aws_eks_access_entry" "admin" {
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = var.admin_principal_arn
   type          = "STANDARD"
+
+  depends_on = [
+    aws_eks_cluster.this
+  ]
 }
 
 resource "aws_eks_access_policy_association" "admin_policy" {
@@ -95,4 +97,8 @@ resource "aws_eks_access_policy_association" "admin_policy" {
   access_scope {
     type = "cluster"
   }
+
+  depends_on = [
+    aws_eks_access_entry.admin
+  ]
 }
