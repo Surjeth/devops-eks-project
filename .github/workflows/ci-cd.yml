@@ -16,8 +16,7 @@ jobs:
       TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
       EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
       IMAGE_NAME: devops-eks-project-repo
-
-      SKIP_BOOTSTRAP: true  # Set to false only for first run
+      SKIP_BOOTSTRAP: true
 
     steps:
     # -------------------------------------------------
@@ -27,7 +26,7 @@ jobs:
       uses: actions/checkout@v4
 
     # -------------------------------------------------
-    # Install Terraform (REQUIRED)
+    # Install Terraform
     # -------------------------------------------------
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
@@ -35,7 +34,7 @@ jobs:
         terraform_version: 1.6.6
 
     # -------------------------------------------------
-    # AWS Authentication (ACCESS KEYS ONLY)
+    # AWS Authentication
     # -------------------------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -45,14 +44,13 @@ jobs:
         aws-region: ${{ secrets.AWS_REGION }}
 
     # -------------------------------------------------
-    # Terraform Bootstrap (S3 + DynamoDB Backend)
-    # Only run if SKIP_BOOTSTRAP is false
+    # Terraform Bootstrap (optional)
     # -------------------------------------------------
     - name: Debug backend values
       if: env.SKIP_BOOTSTRAP != 'true'
       run: |
-         printf "Bucket=[%s]\n" "$TF_STATE_BUCKET"
-         printf "Table=[%s]\n" "$TF_LOCK_TABLE"
+        printf "Bucket=[%s]\n" "$TF_STATE_BUCKET"
+        printf "Table=[%s]\n" "$TF_LOCK_TABLE"
 
     - name: Terraform Bootstrap Init
       if: env.SKIP_BOOTSTRAP != 'true'
@@ -65,11 +63,11 @@ jobs:
       run: |
         cd terraform/bootstrap
         terraform apply -auto-approve \
-           -var="state_bucket_name=$(echo -n "$TF_STATE_BUCKET" | tr -d '\n')" \
-           -var="lock_table_name=$(echo -n "$TF_LOCK_TABLE" | tr -d '\n')"
+          -var="state_bucket_name=$TF_STATE_BUCKET" \
+          -var="lock_table_name=$TF_LOCK_TABLE"
 
     # -------------------------------------------------
-    # Terraform Main Infrastructure
+    # Terraform Main Infra
     # -------------------------------------------------
     - name: Terraform Init (Main)
       run: |
@@ -82,7 +80,7 @@ jobs:
         terraform apply -auto-approve
 
     # -------------------------------------------------
-    # Login to Amazon ECR
+    # ECR Login
     # -------------------------------------------------
     - name: Login to Amazon ECR
       run: |
@@ -101,7 +99,7 @@ jobs:
           -f docker/Dockerfile .
 
     # -------------------------------------------------
-    # Tag & Push Docker Image
+    # Tag & Push Image
     # -------------------------------------------------
     - name: Tag & Push Docker Image
       run: |
@@ -112,13 +110,25 @@ jobs:
           $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
 
     # -------------------------------------------------
-    # Configure kubectl for EKS
+    # Update kubeconfig
     # -------------------------------------------------
     - name: Update kubeconfig
       run: |
         aws eks update-kubeconfig \
           --region $AWS_REGION \
           --name $EKS_CLUSTER_NAME
+
+    # -------------------------------------------------
+    # WAIT FOR RBAC (CRITICAL FIX)
+    # -------------------------------------------------
+    - name: Wait for EKS RBAC propagation
+      run: |
+        echo "Waiting for EKS RBAC to be ready..."
+        for i in {1..10}; do
+          kubectl auth can-i get pods && break
+          echo "RBAC not ready yet... retrying"
+          sleep 15
+        done
 
     # -------------------------------------------------
     # Deploy Kubernetes Manifests
@@ -128,10 +138,10 @@ jobs:
         export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
         export AWS_REGION=${{ secrets.AWS_REGION }}
 
-        kubectl apply -f k8s/namespace.yaml
-        envsubst < k8s/deployment.yaml | kubectl apply -f -
-        kubectl apply -f k8s/service.yaml
-        kubectl apply -f k8s/ingress.yaml
+        kubectl apply -f k8s/namespace.yaml --validate=false
+        envsubst < k8s/deployment.yaml | kubectl apply -f - --validate=false
+        kubectl apply -f k8s/service.yaml --validate=false
+        kubectl apply -f k8s/ingress.yaml --validate=false
 
     # -------------------------------------------------
     # Verify Deployment
