@@ -17,6 +17,7 @@ jobs:
       EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
       IMAGE_NAME: devops-eks-project-repo
       SKIP_BOOTSTRAP: true
+      ADMIN_ARN: arn:aws:iam::505679504503:user/terraadmin
 
     steps:
       # -------------------------------------------------
@@ -31,6 +32,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
+          terraform_wrapper: false
 
       # -------------------------------------------------
       # AWS Credentials
@@ -48,123 +50,69 @@ jobs:
       - name: Verify IAM Identity
         run: |
           echo "Current IAM identity:"
-          aws sts get-caller-identity
-          echo "Expected: arn:aws:iam::505679504503:user/deploy"
+          CURRENT_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Current: $CURRENT_ARN"
+          echo "Expected: $ADMIN_ARN"
+          
+          if [ "$CURRENT_ARN" != "$ADMIN_ARN" ]; then
+            echo "❌ ERROR: IAM identity mismatch!"
+            exit 1
+          fi
+          echo "✅ IAM identity matches"
 
       # -------------------------------------------------
-      # Terraform Apply
+      # Terraform Init
       # -------------------------------------------------
       - name: Terraform Init
         run: |
           cd terraform
           terraform init
 
+      # -------------------------------------------------
+      # Check Terraform State for Access Entry
+      # -------------------------------------------------
+      - name: Check Terraform State
+        run: |
+          cd terraform
+          echo "=== Checking Terraform State ==="
+          terraform state list | grep -i access || echo "⚠️  No access entry resources in state"
+          
+          echo ""
+          echo "=== Checking what Terraform knows about access entry ==="
+          if terraform state list | grep -q "module.eks.aws_eks_access_entry.admin"; then
+            echo "Found access entry in state, showing details:"
+            terraform state show module.eks.aws_eks_access_entry.admin
+          else
+            echo "❌ Access entry NOT in Terraform state"
+          fi
+
+      # -------------------------------------------------
+      # Check AWS for Access Entry
+      # -------------------------------------------------
+      - name: Check AWS for Access Entry
+        run: |
+          echo "=== Checking AWS EKS for access entries ==="
+          CURRENT_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          
+          echo "All access entries in cluster:"
+          aws eks list-access-entries \
+            --cluster-name $EKS_CLUSTER_NAME \
+            --region $AWS_REGION || echo "Failed to list access entries"
+          
+          echo ""
+          echo "Checking if $CURRENT_ARN has access:"
+          aws eks describe-access-entry \
+            --cluster-name $EKS_CLUSTER_NAME \
+            --principal-arn "$CURRENT_ARN" \
+            --region $AWS_REGION 2>&1 || echo "Access entry does NOT exist in AWS"
+
+      # -------------------------------------------------
+      # Terraform Apply with Retry
+      # -------------------------------------------------
       - name: Terraform Apply
         run: |
           cd terraform
-          terraform apply -auto-approve
-
-      # -------------------------------------------------
-      # Wait for EKS cluster to be fully ready
-      # -------------------------------------------------
-      - name: Wait for EKS cluster to be ready
-        run: |
-          echo "Waiting for EKS cluster to be fully operational..."
-          aws eks wait cluster-active --name $EKS_CLUSTER_NAME --region $AWS_REGION
-          echo "✅ EKS cluster is active"
-
-      # -------------------------------------------------
-      # Wait for EKS Access Entry
-      # -------------------------------------------------
-      - name: Wait for EKS access entry
-        run: |
-          echo "Waiting for EKS access entry to propagate..."
-          sleep 30
           
-          echo "Verifying access entry exists..."
-          aws eks describe-access-entry \
-            --cluster-name $EKS_CLUSTER_NAME \
-            --principal-arn arn:aws:iam::505679504503:user/deploy \
-            --region $AWS_REGION
-          
-          echo "Listing all access entries..."
-          aws eks list-access-entries \
-            --cluster-name $EKS_CLUSTER_NAME \
-            --region $AWS_REGION
-
-      # -------------------------------------------------
-      # Update kubeconfig
-      # -------------------------------------------------
-      - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig \
-            --region $AWS_REGION \
-            --name $EKS_CLUSTER_NAME
-
-      # -------------------------------------------------
-      # Test Kubernetes Authentication
-      # -------------------------------------------------
-      - name: Test Kubernetes Authentication
-        run: |
-          echo "Testing kubectl authentication..."
-          for i in {1..12}; do
-            if kubectl auth can-i get namespaces 2>/dev/null; then
-              echo "✅ Authentication successful"
-              kubectl get nodes
-              break
-            else
-              echo "⏳ Waiting for authentication... attempt $i/12"
-              sleep 15
-            fi
-          done
-          
-          # Final verification
-          kubectl auth can-i get namespaces || {
-            echo "❌ Authentication failed after waiting"
-            echo "Cluster info:"
-            kubectl cluster-info
-            exit 1
-          }
-
-      # -------------------------------------------------
-      # ECR Login
-      # -------------------------------------------------
-      - name: Login to Amazon ECR
-        run: |
-          aws ecr get-login-password \
-          | docker login \
-            --username AWS \
-            --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-
-      # -------------------------------------------------
-      # Build & Push Image
-      # -------------------------------------------------
-      - name: Build Docker Image
-        run: |
-          docker build -t $IMAGE_NAME:latest -f docker/Dockerfile .
-
-      - name: Push Docker Image
-        run: |
-          docker tag $IMAGE_NAME:latest \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
-
-      # -------------------------------------------------
-      # Deploy Manifests
-      # -------------------------------------------------
-      - name: Deploy Kubernetes Manifests
-        run: |
-          kubectl apply -f k8s/namespace.yaml
-          envsubst < k8s/deployment.yaml | kubectl apply -f -
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/ingress.yaml
-
-      # -------------------------------------------------
-      # Verify
-      # -------------------------------------------------
-      - name: Verify Deployment
-        run: |
-          kubectl get pods -n devops
-          kubectl get svc -n devops
-          kubectl get ingress -n devops
+          for i in {1..3}; do
+            echo "Terraform apply attempt $i/3..."
+            
