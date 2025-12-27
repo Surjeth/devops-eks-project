@@ -26,7 +26,7 @@ jobs:
       uses: actions/checkout@v4
 
     # -------------------------------------------------
-    # Install Terraform
+    # Setup Terraform
     # -------------------------------------------------
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
@@ -46,12 +46,6 @@ jobs:
     # -------------------------------------------------
     # Terraform Bootstrap (optional)
     # -------------------------------------------------
-    - name: Debug backend values
-      if: env.SKIP_BOOTSTRAP != 'true'
-      run: |
-        printf "Bucket=[%s]\n" "$TF_STATE_BUCKET"
-        printf "Table=[%s]\n" "$TF_LOCK_TABLE"
-
     - name: Terraform Bootstrap Init
       if: env.SKIP_BOOTSTRAP != 'true'
       run: |
@@ -80,7 +74,7 @@ jobs:
         terraform apply -auto-approve
 
     # -------------------------------------------------
-    # ECR Login
+    # Login to Amazon ECR
     # -------------------------------------------------
     - name: Login to Amazon ECR
       run: |
@@ -99,7 +93,7 @@ jobs:
           -f docker/Dockerfile .
 
     # -------------------------------------------------
-    # Tag & Push Image
+    # Tag & Push Docker Image
     # -------------------------------------------------
     - name: Tag & Push Docker Image
       run: |
@@ -110,38 +104,44 @@ jobs:
           $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
 
     # -------------------------------------------------
-    # Update kubeconfig
+    # Configure kubectl (FORCE CONTEXT)
     # -------------------------------------------------
     - name: Update kubeconfig
       run: |
         aws eks update-kubeconfig \
           --region $AWS_REGION \
-          --name $EKS_CLUSTER_NAME
+          --name $EKS_CLUSTER_NAME \
+          --alias ci-eks
+
+        kubectl config use-context ci-eks
 
     # -------------------------------------------------
-    # WAIT FOR RBAC (CRITICAL FIX)
+    # WAIT FOR EKS RBAC (CRITICAL)
     # -------------------------------------------------
     - name: Wait for EKS RBAC propagation
       run: |
-        echo "Waiting for EKS RBAC to be ready..."
-        for i in {1..20}; do
-          kubectl get ns && break
-          echo "Waiting for EKS API access..."
-          sleep 15
+        echo "Waiting for EKS RBAC authorization..."
+        for i in {1..30}; do
+          if kubectl auth can-i get pods --all-namespaces; then
+            echo "RBAC is ready"
+            exit 0
+          fi
+          echo "RBAC not ready yet... retrying"
+          sleep 10
         done
+
+        echo "RBAC never became ready"
+        exit 1
 
     # -------------------------------------------------
     # Deploy Kubernetes Manifests
     # -------------------------------------------------
     - name: Deploy Kubernetes Manifests
       run: |
-        export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
-        export AWS_REGION=${{ secrets.AWS_REGION }}
-
-        kubectl apply -f k8s/namespace.yaml --validate=false
-        envsubst < k8s/deployment.yaml | kubectl apply -f - --validate=false
-        kubectl apply -f k8s/service.yaml --validate=false
-        kubectl apply -f k8s/ingress.yaml --validate=false
+        kubectl apply -f k8s/namespace.yaml
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/ingress.yaml
 
     # -------------------------------------------------
     # Verify Deployment
