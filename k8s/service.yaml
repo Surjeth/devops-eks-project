@@ -4,7 +4,7 @@ metadata:
   name: react-service
   namespace: devops
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: react-app
   ports:
