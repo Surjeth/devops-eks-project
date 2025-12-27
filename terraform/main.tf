@@ -19,7 +19,7 @@ module "eks" {
 
   project_name        = var.project_name
   subnet_ids          = module.vpc.subnet_ids
-  private_subnet_ids = module.vpc.private_subnet_ids
+  private_subnet_ids = module.vpc.private_subnet_id
   cluster_role_arn    = module.iam.eks_cluster_role_arn
 
   # 🔥 THIS MUST MATCH YOUR PIPELINE IAM USER
