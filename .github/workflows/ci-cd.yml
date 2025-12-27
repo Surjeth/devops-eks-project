@@ -19,104 +19,152 @@ jobs:
       SKIP_BOOTSTRAP: true
 
     steps:
-    # -------------------------------------------------
-    # Checkout
-    # -------------------------------------------------
-    - uses: actions/checkout@v4
+      # -------------------------------------------------
+      # Checkout
+      # -------------------------------------------------
+      - uses: actions/checkout@v4
 
-    # -------------------------------------------------
-    # Terraform
-    # -------------------------------------------------
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.6.6
+      # -------------------------------------------------
+      # Terraform
+      # -------------------------------------------------
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
 
-    # -------------------------------------------------
-    # AWS Credentials
-    # -------------------------------------------------
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      # -------------------------------------------------
+      # AWS Credentials
+      # -------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    # -------------------------------------------------
-    # Terraform Apply
-    # -------------------------------------------------
-    - name: Terraform Init
-      run: |
-        cd terraform
-        terraform init
+      # -------------------------------------------------
+      # Verify IAM Identity
+      # -------------------------------------------------
+      - name: Verify IAM Identity
+        run: |
+          echo "Current IAM identity:"
+          aws sts get-caller-identity
+          echo "Expected: arn:aws:iam::505679504503:user/deploy"
 
-    - name: Terraform Apply
-      run: |
-        cd terraform
-        terraform apply -auto-approve
+      # -------------------------------------------------
+      # Terraform Apply
+      # -------------------------------------------------
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
 
-    # -------------------------------------------------
-    # ECR Login
-    # -------------------------------------------------
-    - name: Login to Amazon ECR
-      run: |
-        aws ecr get-login-password \
-        | docker login \
-          --username AWS \
-          --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve
 
-    # -------------------------------------------------
-    # Build & Push Image
-    # -------------------------------------------------
-    - name: Build Docker Image
-      run: |
-        docker build -t $IMAGE_NAME:latest -f docker/Dockerfile .
+      # -------------------------------------------------
+      # Wait for EKS cluster to be fully ready
+      # -------------------------------------------------
+      - name: Wait for EKS cluster to be ready
+        run: |
+          echo "Waiting for EKS cluster to be fully operational..."
+          aws eks wait cluster-active --name $EKS_CLUSTER_NAME --region $AWS_REGION
+          echo "✅ EKS cluster is active"
 
-    - name: Push Docker Image
-      run: |
-        docker tag $IMAGE_NAME:latest \
-          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
-        docker push \
-          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
-
-    # -------------------------------------------------
-    # Wait for EKS Access Entry (AWS API – NOT kubectl)
-    # -------------------------------------------------
-    - name: Wait for EKS access entry
-      run: |
-        echo "Waiting for EKS access entry to propagate..."
-        for i in {1..30}; do
+      # -------------------------------------------------
+      # Wait for EKS Access Entry
+      # -------------------------------------------------
+      - name: Wait for EKS access entry
+        run: |
+          echo "Waiting for EKS access entry to propagate..."
+          sleep 30
+          
+          echo "Verifying access entry exists..."
+          aws eks describe-access-entry \
+            --cluster-name $EKS_CLUSTER_NAME \
+            --principal-arn arn:aws:iam::505679504503:user/deploy \
+            --region $AWS_REGION
+          
+          echo "Listing all access entries..."
           aws eks list-access-entries \
             --cluster-name $EKS_CLUSTER_NAME \
-            | grep deploy && break
-          echo "Access not ready yet..."
-          sleep 15
-        done
+            --region $AWS_REGION
 
-    # -------------------------------------------------
-    # Update kubeconfig (AFTER RBAC EXISTS)
-    # -------------------------------------------------
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig \
-          --region $AWS_REGION \
-          --name $EKS_CLUSTER_NAME
+      # -------------------------------------------------
+      # Update kubeconfig
+      # -------------------------------------------------
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER_NAME
 
-    # -------------------------------------------------
-    # Deploy Manifests
-    # -------------------------------------------------
-    - name: Deploy Kubernetes Manifests
-      run: |
-        kubectl apply -f k8s/namespace.yaml
-        envsubst < k8s/deployment.yaml | kubectl apply -f -
-        kubectl apply -f k8s/service.yaml
-        kubectl apply -f k8s/ingress.yaml
+      # -------------------------------------------------
+      # Test Kubernetes Authentication
+      # -------------------------------------------------
+      - name: Test Kubernetes Authentication
+        run: |
+          echo "Testing kubectl authentication..."
+          for i in {1..12}; do
+            if kubectl auth can-i get namespaces 2>/dev/null; then
+              echo "✅ Authentication successful"
+              kubectl get nodes
+              break
+            else
+              echo "⏳ Waiting for authentication... attempt $i/12"
+              sleep 15
+            fi
+          done
+          
+          # Final verification
+          kubectl auth can-i get namespaces || {
+            echo "❌ Authentication failed after waiting"
+            echo "Cluster info:"
+            kubectl cluster-info
+            exit 1
+          }
 
-    # -------------------------------------------------
-    # Verify
-    # -------------------------------------------------
-    - name: Verify Deployment
-      run: |
-        kubectl get pods -n devops
-        kubectl get svc -n devops
-        kubectl get ingress -n devops
+      # -------------------------------------------------
+      # ECR Login
+      # -------------------------------------------------
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password \
+          | docker login \
+            --username AWS \
+            --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      # -------------------------------------------------
+      # Build & Push Image
+      # -------------------------------------------------
+      - name: Build Docker Image
+        run: |
+          docker build -t $IMAGE_NAME:latest -f docker/Dockerfile .
+
+      - name: Push Docker Image
+        run: |
+          docker tag $IMAGE_NAME:latest \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
+          docker push \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME:latest
+
+      # -------------------------------------------------
+      # Deploy Manifests
+      # -------------------------------------------------
+      - name: Deploy Kubernetes Manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          envsubst < k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
+
+      # -------------------------------------------------
+      # Verify
+      # -------------------------------------------------
+      - name: Verify Deployment
+        run: |
+          kubectl get pods -n devops
+          kubectl get svc -n devops
+          kubectl get ingress -n devops
