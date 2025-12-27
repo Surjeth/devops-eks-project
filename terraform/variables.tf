@@ -9,7 +9,7 @@ variable "project_name" {
 variable "vpc_cidr" {
   default = "10.0.0.0/16"
 }
-variable "admin_principal_arn" {
-  default = "arn:aws:iam::505679504503:user/deploy"
-}
 
+variable "admin_principal_arn" {
+  default = "arn:aws:iam::505679504503:user/terraadmin"
+}
