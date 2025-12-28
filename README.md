@@ -2,11 +2,10 @@
 
 End-to-end DevOps pipeline for deploying applications to AWS EKS using Terraform, Docker, and Kubernetes.
 
-Project Structure
+## Project Flow
+<img width="1024" height="1536" alt="image" src="https://github.com/user-attachments/assets/ee5f5f72-bd49-4001-9a6f-b2c94c5fceff" />
 
-<img width="416" height="620" alt="image" src="https://github.com/user-attachments/assets/b1980acf-6705-4366-a677-2de5a3e62f4a" />
-
-
+```
 GitHub (Push to main)
         |
         v
@@ -23,7 +22,7 @@ GitHub Actions CI/CD
                 |
                 v
             Public URL
-
+```
 
 ## Project Structure
 
@@ -74,4 +73,15 @@ Configure the following secrets in your GitHub repository:
 - **EKS**: Managed Kubernetes cluster
 - **ECR**: Docker image registry
 - **IAM**: Service roles and policies
+
+## Deployment Pipeline
+
+The GitHub Actions workflow automatically:
+
+1. Provisions AWS infrastructure with Terraform
+2. Creates EKS access entries for authentication
+3. Builds Docker image
+4. Pushes image to ECR
+5. Deploys application to EKS
+6. Verifies deployment
 
